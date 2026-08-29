@@ -1,0 +1,26 @@
+name: "Livongo BP Collector"
+version: "0.2.0"
+slug: "livongo_bp_collector"
+description: "Collect Livongo blood pressure readings and publish them to Home Assistant"
+url: "https://github.com/davidbrenner1/livongo-bp-home-assistant"
+image: "ghcr.io/davidbrenner1/livongo-bp-collector"
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: false
+stage: experimental
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: "mdi:heart-pulse"
+panel_title: "Livongo BP"
+options:
+  sync_interval_minutes: 15
+  lookback_days: 7
+  emit_initial_events: false
+schema:
+  sync_interval_minutes: "int(1,1440)"
+  lookback_days: "int(1,90)"
+  emit_initial_events: "bool"

@@ -1,0 +1,87 @@
+# macOS & OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Python artifacts & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# Livongo session files
+*session*.json
+*session*.yaml
+*session*.yml
+*session*.txt
+*session-bundle*
+*session_bundle*
+*.session
+session_storage/
+session-storage/
+livongo-api-probe-output/
+livongo-discovery-output/
+
+# Cookies & browser storage
+*cookie*
+*cookies*
+*storage_state*
+*browser_storage*
+storage_state.json
+storage_state/
+
+# Bearer tokens & auth tokens
+*token*.json
+*tokens*.json
+*token*.txt
+*tokens*.txt
+*bearer*.json
+*bearer*.txt
+*bearer*token*
+*.token
+*.tokens
+token.txt
+tokens.txt
+
+# Health data & local databases
+*health*.json
+*health-data*.json
+*health_data*.json
+*reading*.json
+*readings*.json
+*bp*.json
+*bp_reading*.json
+*.sqlite3
+*.sqlite
+*.db
+
+# Secrets & credentials
+*secret*.json
+*secret*.yaml
+*secret*.yml
+*secret*.txt
+*secrets*.json
+*secrets*.yaml
+*secrets*.yml
+*secrets*.txt
+*credential*.json
+*credential*.yaml
+*credential*.yml
+*credential*.txt
+*credentials*.json
+*credentials*.yaml
+*credentials*.yml
+*credentials*.txt
+.env
+.env.*
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12

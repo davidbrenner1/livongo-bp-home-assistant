@@ -1,0 +1,63 @@
+name: Build and publish Home Assistant app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "livongo_bp_collector/**"
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set image metadata
+        id: vars
+        shell: bash
+        run: |
+          OWNER="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          VERSION="$(sed -n 's/^version: *"\([^"]*\)"/\1/p' livongo_bp_collector/config.yaml)"
+          if [ -z "$VERSION" ]; then
+            echo "Could not read app version" >&2
+            exit 1
+          fi
+          echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$OWNER/livongo-bp-collector" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-architecture image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./livongo_bp_collector
+          file: ./livongo_bp_collector/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            BUILD_VERSION=${{ steps.vars.outputs.version }}
+            BUILD_ARCH=multi
+          tags: |
+            ${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.version }}
+            ${{ steps.vars.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
