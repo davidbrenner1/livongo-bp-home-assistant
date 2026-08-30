@@ -44,8 +44,13 @@ def main() -> int:
         page = context.new_page()
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=120_000)
 
-        input("After All Logs is loaded, press ENTER here...\n")
-        page.wait_for_timeout(1000)
+        print("Waiting for you to log in and navigate to Blood Pressure -> All Logs...")
+        try:
+            page.wait_for_url("**/blood-pressure/all-logs**", timeout=300_000)
+            print("Detected Blood Pressure All Logs page! Capturing session state in 3 seconds...")
+            page.wait_for_timeout(3000)
+        except Exception:
+            print("Timed out waiting for All Logs page navigation.")
 
         try:
             storage_state = context.storage_state(indexed_db=True)
