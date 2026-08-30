@@ -374,6 +374,17 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
                     results[int(reading["id"])] = reading
                 day += timedelta(days=1)
 
+            # Persist updated storage_state from browser context so token renewals are preserved
+            try:
+                updated_state = context.storage_state()
+                bundle["storage_state"] = updated_state
+                bundle["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+                SESSION_FILE.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+                os.chmod(SESSION_FILE, 0o600)
+                LOG.info("Persisted updated Livongo session state to disk")
+            except Exception:
+                LOG.exception("Failed to persist updated session state")
+
             context.close()
             browser.close()
             return list(results.values())
@@ -603,11 +614,17 @@ def index() -> str:
 
 @app.post("/upload")
 def upload_session() -> Any:
-    file = request.files.get("session")
-    if not file:
-        return "Missing session file", 400
+    bundle = None
+    if request.is_json:
+        bundle = request.get_json(silent=True)
+    elif "session" in request.files:
+        file = request.files.get("session")
+        if file:
+            bundle = json.load(file.stream)
+
+    if not bundle:
+        return ("Missing session file or JSON body", 400) if request.is_json else ("Missing session file", 400)
     try:
-        bundle = json.load(file.stream)
         validate_session_bundle(bundle)
         SESSION_FILE.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
         os.chmod(SESSION_FILE, 0o600)
@@ -615,7 +632,9 @@ def upload_session() -> Any:
         start_sync_async()
     except Exception as exc:
         LOG.exception("Invalid session upload")
-        return f"Invalid session bundle: {exc}", 400
+        return (f"Invalid session bundle: {exc}", 400) if request.is_json else (f"Invalid session bundle: {exc}", 400)
+    if request.is_json:
+        return {"status": "ok", "message": "Session uploaded successfully"}
     return redirect(ingress_root())
 
 

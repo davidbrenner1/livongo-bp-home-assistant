@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,7 +15,19 @@ LOGIN_URL = "https://my.livongo.com/login"
 OUTPUT = Path("livongo-session-bundle.json")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Export Livongo authenticated browser session bundle")
+    parser.add_argument(
+        "--upload-url",
+        "-u",
+        help="Optional URL to automatically POST the session bundle to (e.g. http://192.168.50.116:8099/upload)",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
+
     print(
         "Livongo session exporter\n\n"
         "1. A Chromium window will open.\n"
@@ -49,7 +64,8 @@ def main() -> int:
             "session_storage": {page.url.split("/", 3)[0] + "//" + page.url.split("/", 3)[2]: session_storage},
         }
 
-        OUTPUT.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+        data_bytes = json.dumps(bundle, indent=2).encode("utf-8")
+        OUTPUT.write_bytes(data_bytes)
         try:
             os.chmod(OUTPUT, 0o600)
         except OSError:
@@ -59,7 +75,27 @@ def main() -> int:
         browser.close()
 
     print(f"\nSaved: {OUTPUT.resolve()}")
-    print("Upload this file only through the Livongo BP Collector web UI in Home Assistant.")
+
+    if args.upload_url:
+        print(f"Uploading session bundle to: {args.upload_url}...")
+        req = urllib.request.Request(
+            args.upload_url,
+            data=data_bytes,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                print(f"✓ Upload succeeded! Status code: {resp.status}")
+        except urllib.error.HTTPError as e:
+            print(f"✗ Upload failed: HTTP {e.code} - {e.read().decode('utf-8', errors='ignore')}")
+            return 1
+        except Exception as e:
+            print(f"✗ Upload failed: {e}")
+            return 1
+    else:
+        print("Upload this file through the Livongo BP Collector web UI in Home Assistant, or pass --upload-url.")
+
     return 0
 
 
