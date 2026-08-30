@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2
+- Block third-party tracking scripts (Mixpanel, New Relic, Apptentive, etc.) to prevent socket exhaustion and `ERR_SOCKET_NOT_CONNECTED` network errors in Docker.
+- Added navigation retry loop (up to 3 attempts with exponential backoff) with `wait_until="commit"`.
+
 ## 0.2.1
 - Automatically persist refreshed Playwright browser session state & cookies back to disk on each sync cycle to maintain active authentication.
 - Added JSON payload support to the `/upload` endpoint for automated session uploads.

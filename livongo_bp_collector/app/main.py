@@ -291,6 +291,25 @@ def restore_session_storage(context: Any, bundle: dict[str, Any]) -> None:
     )
 
 
+TRACKER_SUBSTRINGS = (
+    "mixpanel",
+    "newrelic",
+    "nr-data",
+    "apptentive",
+    "analytics",
+    "optimizely",
+    "sentry",
+    "google-analytics",
+    "googletagmanager",
+    "doubleclick",
+)
+
+
+def is_tracker(url: str) -> bool:
+    url_lower = url.lower()
+    return any(t in url_lower for t in TRACKER_SUBSTRINGS)
+
+
 def endpoint_base(url: str) -> str:
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
@@ -311,9 +330,29 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
             browser = p.chromium.launch(
                 headless=True,
                 executable_path=CHROMIUM,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-background-networking",
+                    "--disable-features=AsyncDns",
+                ],
             )
             context = browser.new_context(storage_state=storage_path, timezone_id=tz_name)
+
+            def block_trackers(route: Any) -> None:
+                if is_tracker(route.request.url):
+                    try:
+                        route.abort()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        route.continue_()
+                    except Exception:
+                        pass
+
+            context.route("**/*", block_trackers)
             restore_session_storage(context, bundle)
             page = context.new_page()
 
@@ -325,7 +364,21 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
                         captured["endpoint"] = req.url
 
             page.on("request", on_request)
-            page.goto(LOGS_URL, wait_until="domcontentloaded", timeout=60_000)
+
+            # Retry loop for navigation to handle transient socket resets
+            nav_error: Exception | None = None
+            for attempt in range(1, 4):
+                try:
+                    page.goto(LOGS_URL, wait_until="commit", timeout=30_000)
+                    nav_error = None
+                    break
+                except Exception as exc:
+                    nav_error = exc
+                    LOG.warning("Navigation attempt %d failed: %s; retrying...", attempt, exc)
+                    time.sleep(2 * attempt)
+
+            if nav_error:
+                raise nav_error
 
             deadline = time.monotonic() + 30
             while not captured["authorization"] and time.monotonic() < deadline:

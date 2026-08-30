@@ -1,5 +1,5 @@
 name: "Livongo BP Collector"
-version: "0.2.1"
+version: "0.2.2"
 slug: "livongo_bp_collector"
 description: "Collect Livongo blood pressure readings and publish them to Home Assistant"
 url: "https://github.com/davidbrenner1/livongo-bp-home-assistant"
