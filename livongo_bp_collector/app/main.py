@@ -26,8 +26,8 @@ SESSION_FILE = DATA_DIR / "livongo-session-bundle.json"
 DB_FILE = DATA_DIR / "livongo-readings.sqlite3"
 OPTIONS_FILE = DATA_DIR / "options.json"
 CHROMIUM = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium")
-LOGIN_URL = "https://my.livongo.com/login"
-LOGS_URL = "https://my.livongo.com/blood-pressure/all-logs"
+LOGIN_URL = "https://member.teladoc.com/signin"
+LOGS_URL = "https://my.teladoc.com/condition-management/blood-pressure/all-logs"
 HA_API = "http://supervisor/core/api"
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 BP_ENDPOINT_RE = re.compile(
@@ -387,11 +387,11 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
             while not captured["authorization"] and time.monotonic() < deadline:
                 page.wait_for_timeout(500)
 
-            if "/login" in page.url and not captured["authorization"]:
-                raise PermissionError("Livongo session expired; upload a new session bundle")
+            if ("/login" in page.url or "/signin" in page.url) and not captured["authorization"]:
+                raise PermissionError("Teladoc session expired; upload a new session bundle")
             if not captured["authorization"] or not captured["endpoint"]:
                 raise PermissionError(
-                    "Could not obtain Livongo API authorization from the saved session; re-authenticate"
+                    "Could not obtain Teladoc/Livongo API authorization from the saved session; re-authenticate"
                 )
 
             base = endpoint_base(str(captured["endpoint"]))
@@ -414,7 +414,7 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
                     headers={
                         "Authorization": auth_header,
                         "Accept": "application/json, text/plain, */*",
-                        "Referer": "https://my.livongo.com/",
+                        "Referer": "https://my.teladoc.com/",
                     },
                     timeout=30_000,
                 )

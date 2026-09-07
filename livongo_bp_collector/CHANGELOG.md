@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.4
+- Migrated default member portal URLs and Referers from deprecated Livongo endpoints to Teladoc Health (`my.teladoc.com` / `member.teladoc.com/signin`).
+- Added multi-domain cookie and local storage state persistence across `teladoc.com` and `livongo.com`.
+
 ## 0.2.3
 - Enabled `init: true` in `config.yaml` to ensure Docker `tini` process reaper prevents `<defunct>` zombie process accumulation.
 - Added a 90-second watchdog execution timeout around `fetch_livongo_readings()` to guarantee `sync_lock` is never held permanently if browser IPC hangs.
