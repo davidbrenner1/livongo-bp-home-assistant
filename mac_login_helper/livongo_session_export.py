@@ -40,13 +40,26 @@ def main() -> int:
         "The generated JSON contains authenticated browser state. Treat it like a password.\n"
     )
 
+    captured_apis: list[str] = []
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
+
+        def on_request(req: Any) -> None:
+            url = req.url
+            if any(k in url.lower() for k in ("reading", "bp", "blood_pressure", "graphql", "/api/", "livongo", "teladoc")):
+                auth = req.headers.get("authorization")
+                if auth or "reading" in url.lower() or "bp" in url.lower():
+                    print(f"Captured API request: {req.method} {url[:100]}")
+                    if url not in captured_apis:
+                        captured_apis.append(url)
+
+        page.on("request", on_request)
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=120_000)
 
-        input(">>> After you have logged in and are viewing your Blood Pressure readings, press ENTER here...\n")
+        input(">>> After logging in, clicking 'Go to Teladoc Health', and viewing your BP readings, press ENTER here...\n")
         page.wait_for_timeout(1000)
 
         try:
@@ -54,16 +67,21 @@ def main() -> int:
         except TypeError:
             storage_state = context.storage_state()
 
-        session_storage = page.evaluate(
-            "Object.fromEntries(Array.from({length: sessionStorage.length}, "
-            "(_, i) => { const k = sessionStorage.key(i); return [k, sessionStorage.getItem(k)]; }))"
-        )
+        try:
+            session_storage = page.evaluate(
+                "Object.fromEntries(Array.from({length: sessionStorage.length}, "
+                "(_, i) => { const k = sessionStorage.key(i); return [k, sessionStorage.getItem(k)]; }))"
+            )
+        except Exception:
+            session_storage = {}
 
         bundle = {
             "format": 1,
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "final_url": page.url,
+            "captured_apis": captured_apis,
             "storage_state": storage_state,
-            "session_storage": {page.url.split("/", 3)[0] + "//" + page.url.split("/", 3)[2]: session_storage},
+            "session_storage": {page.url.split("/", 3)[0] + "//" + page.url.split("/", 3)[2]: session_storage} if page.url.startswith("http") else {},
         }
 
         data_bytes = json.dumps(bundle, indent=2).encode("utf-8")
