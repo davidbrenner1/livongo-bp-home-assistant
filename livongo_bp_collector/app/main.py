@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
 import re
+import signal
 import sqlite3
+import subprocess
 import tempfile
 import threading
 import time
@@ -446,6 +449,31 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
             os.unlink(storage_path)
         except OSError:
             pass
+        cleanup_dangling_processes()
+
+
+def cleanup_dangling_processes() -> None:
+    """Terminate any orphan/lingering Chromium processes to avoid zombie accumulation."""
+    for proc in ("chromium", "chrome_crashpad_handler", "node"):
+        try:
+            subprocess.run(["pkill", "-9", "-f", proc], capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
+def fetch_livongo_readings_with_timeout(lookback_days: int, timeout_seconds: int = 90) -> list[dict[str, Any]]:
+    """Runs fetch_livongo_readings with a hard timeout to prevent indefinite deadlocks."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fetch_livongo_readings, lookback_days)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError:
+            LOG.error("fetch_livongo_readings timed out after %d seconds! Killing dangling processes...", timeout_seconds)
+            cleanup_dangling_processes()
+            raise TimeoutError(f"Livongo fetch timed out after {timeout_seconds} seconds")
+        except Exception:
+            cleanup_dangling_processes()
+            raise
 
 
 def insert_readings(readings: list[dict[str, Any]]) -> list[int]:
@@ -502,7 +530,7 @@ def sync_once() -> None:
         with db() as conn:
             before_count = conn.execute("SELECT COUNT(*) AS c FROM readings").fetchone()["c"]
 
-        readings = fetch_livongo_readings(opts.lookback_days)
+        readings = fetch_livongo_readings_with_timeout(opts.lookback_days, timeout_seconds=90)
         inserted_ids = insert_readings(readings)
         valid_rows = rows_by_ids(inserted_ids)
 
@@ -518,7 +546,11 @@ def sync_once() -> None:
                     LOG.exception("Failed to fire event for Livongo reading %s", row["id"])
 
         set_kv("initial_sync_done", "1")
-        publish_latest_sensors()
+        try:
+            publish_latest_sensors()
+        except Exception as exc:
+            LOG.warning("Could not publish latest sensors to Home Assistant: %s", exc)
+
         message = (
             f"Sync complete: {len(readings)} fetched, {len(inserted_ids)} new, {emitted} events emitted"
         )
@@ -711,6 +743,10 @@ def replay_events() -> Any:
 
 
 def main() -> None:
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+    except Exception:
+        pass
     init_db()
     try:
         publish_status_sensor()

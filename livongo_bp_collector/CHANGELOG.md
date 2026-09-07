@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+- Enabled `init: true` in `config.yaml` to ensure Docker `tini` process reaper prevents `<defunct>` zombie process accumulation.
+- Added a 90-second watchdog execution timeout around `fetch_livongo_readings()` to guarantee `sync_lock` is never held permanently if browser IPC hangs.
+- Added automatic cleanup of orphan/defunct Chromium processes and kernel-level `SIGCHLD` reaping.
+- Gracefully handled Home Assistant API connection errors during Supervisor reboots.
+
 ## 0.2.2
 - Block third-party tracking scripts (Mixpanel, New Relic, Apptentive, etc.) to prevent socket exhaustion and `ERR_SOCKET_NOT_CONNECTED` network errors in Docker.
 - Added navigation retry loop (up to 3 attempts with exponential backoff) with `wait_until="commit"`.
