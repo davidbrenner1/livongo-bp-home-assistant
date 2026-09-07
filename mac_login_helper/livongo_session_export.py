@@ -12,7 +12,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-LOGIN_URL = "https://my.livongo.com/login"
+LOGIN_URL = "https://member.teladoc.com/signin"
 OUTPUT = Path("livongo-session-bundle.json")
 
 
@@ -21,8 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--login-url",
         "-l",
-        default="https://member.teladochealth.com",
-        help="Initial login URL to open in browser (defaults to https://member.teladochealth.com)",
+        default="https://member.teladoc.com/signin",
+        help="Initial login URL to open in browser (defaults to https://member.teladoc.com/signin)",
     )
     parser.add_argument(
         "--upload-url",
