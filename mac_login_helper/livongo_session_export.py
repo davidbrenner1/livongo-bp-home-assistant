@@ -56,6 +56,48 @@ def main() -> int:
         context = browser.new_context(
             permissions=["clipboard-read", "clipboard-write"],
         )
+
+        # Force unblock paste events and handle React inputs
+        context.add_init_script(
+            """
+            (() => {
+                const unblock = (e) => e.stopImmediatePropagation();
+                window.addEventListener('paste', unblock, true);
+                document.addEventListener('paste', unblock, true);
+                window.addEventListener('copy', unblock, true);
+                window.addEventListener('cut', unblock, true);
+
+                document.addEventListener('keydown', async (e) => {
+                    if ((e.metaKey || e.ctrlKey) && (e.key === 'v' || e.key === 'V')) {
+                        const target = document.activeElement;
+                        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+                            try {
+                                const text = await navigator.clipboard.readText();
+                                if (text) {
+                                    const proto = target.tagName === 'INPUT' ? window.HTMLInputElement.prototype : window.HTMLTextAreaElement.prototype;
+                                    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                                    if (setter) {
+                                        setter.call(target, text);
+                                    } else {
+                                        target.value = text;
+                                    }
+                                    target.dispatchEvent(new Event('input', { bubbles: true }));
+                                    target.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            } catch (err) {}
+                        }
+                    }
+                }, true);
+
+                setInterval(() => {
+                    document.querySelectorAll('input, textarea').forEach(el => {
+                        el.onpaste = null;
+                        el.removeAttribute('onpaste');
+                    });
+                }, 500);
+            })();
+            """
+        )
         page = context.new_page()
 
         def on_request(req: Any) -> None:
