@@ -17,7 +17,13 @@ OUTPUT = Path("livongo-session-bundle.json")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Export Livongo authenticated browser session bundle")
+    parser = argparse.ArgumentParser(description="Export Teladoc Health / Livongo authenticated browser session bundle")
+    parser.add_argument(
+        "--login-url",
+        "-l",
+        default="https://member.teladochealth.com",
+        help="Initial login URL to open in browser (defaults to https://member.teladochealth.com)",
+    )
     parser.add_argument(
         "--upload-url",
         "-u",
@@ -31,12 +37,11 @@ def main() -> int:
     args = parse_args()
 
     print(
-        "Livongo session exporter\n\n"
-        "1. A Chromium window will open.\n"
-        "2. Log into Livongo normally.\n"
-        "3. Navigate to Blood Pressure -> All Logs.\n"
-        "4. Wait for your readings to appear.\n"
-        "5. Return to this Terminal window and press Enter.\n\n"
+        "Teladoc Health / Livongo Session Exporter\n\n"
+        f"1. A Chromium browser window will open to {args.login_url}.\n"
+        "2. Log into your Teladoc Health account (complete 2FA if prompted).\n"
+        "3. Navigate to your Blood Pressure readings / history page.\n"
+        "4. Return to this Terminal window and press ENTER.\n\n"
         "The generated JSON contains authenticated browser state. Treat it like a password.\n"
     )
 
@@ -57,9 +62,9 @@ def main() -> int:
                         captured_apis.append(url)
 
         page.on("request", on_request)
-        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=120_000)
+        page.goto(args.login_url, wait_until="domcontentloaded", timeout=120_000)
 
-        input(">>> After logging in, clicking 'Go to Teladoc Health', and viewing your BP readings, press ENTER here...\n")
+        input(">>> After logging in and viewing your BP readings, press ENTER here...\n")
         page.wait_for_timeout(1000)
 
         try:
