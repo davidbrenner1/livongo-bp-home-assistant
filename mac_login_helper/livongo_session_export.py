@@ -48,8 +48,14 @@ def main() -> int:
     captured_apis: list[str] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        try:
+            browser = p.chromium.launch(channel="chrome", headless=False)
+        except Exception:
+            browser = p.chromium.launch(headless=False)
+
+        context = browser.new_context(
+            permissions=["clipboard-read", "clipboard-write"],
+        )
         page = context.new_page()
 
         def on_request(req: Any) -> None:
