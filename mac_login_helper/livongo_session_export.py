@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -20,7 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--upload-url",
         "-u",
-        help="Optional URL to automatically POST the session bundle to (e.g. http://192.168.50.116:8099/upload)",
+        default="http://192.168.50.116:8099/upload",
+        help="Optional URL to automatically POST the session bundle to (defaults to http://192.168.50.116:8099/upload)",
     )
     return parser.parse_args()
 
@@ -44,13 +46,8 @@ def main() -> int:
         page = context.new_page()
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=120_000)
 
-        print("Waiting for you to log in and navigate to Blood Pressure -> All Logs...")
-        try:
-            page.wait_for_url("**/blood-pressure/all-logs**", timeout=300_000)
-            print("Detected Blood Pressure All Logs page! Capturing session state in 3 seconds...")
-            page.wait_for_timeout(3000)
-        except Exception:
-            print("Timed out waiting for All Logs page navigation.")
+        input(">>> After you have logged in and are viewing your Blood Pressure readings, press ENTER here...\n")
+        page.wait_for_timeout(1000)
 
         try:
             storage_state = context.storage_state(indexed_db=True)
