@@ -177,6 +177,7 @@ def main() -> int:
 
     print(f"\nSaved: {OUTPUT.resolve()}")
 
+    uploaded = False
     if args.upload_url:
         print(f"Uploading session bundle to: {args.upload_url}...")
         req = urllib.request.Request(
@@ -188,14 +189,42 @@ def main() -> int:
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 print(f"✓ Upload succeeded! Status code: {resp.status}")
+                uploaded = True
         except urllib.error.HTTPError as e:
             print(f"✗ Upload failed: HTTP {e.code} - {e.read().decode('utf-8', errors='ignore')}")
-            return 1
         except Exception as e:
-            print(f"✗ Upload failed: {e}")
-            return 1
-    else:
-        print("Upload this file through the Livongo BP Collector web UI in Home Assistant, or pass --upload-url.")
+            print(f"✗ HTTP Upload failed ({e}); attempting SSH transfer to Home Assistant...")
+            try:
+                import subprocess
+                ha_host = "192.168.50.116"
+                ssh_user = "root"
+                remote_tmp = "/tmp/livongo-session-bundle.json"
+                subprocess.run(
+                    ["scp", "-o", "ConnectTimeout=5", str(OUTPUT.resolve()), f"{ssh_user}@{ha_host}:{remote_tmp}"],
+                    check=True,
+                    capture_output=True,
+                )
+                cmd = (
+                    f"CID=$(docker ps -q --filter name=livongo | head -n1); "
+                    f"if [ -n \"$CID\" ]; then "
+                    f"docker cp {remote_tmp} $CID:/data/livongo-session-bundle.json && "
+                    f"docker exec $CID chmod 600 /data/livongo-session-bundle.json && "
+                    f"docker exec $CID python3 -c 'import urllib.request; req=urllib.request.Request(\"http://127.0.0.1:8099/sync\", method=\"POST\"); urllib.request.urlopen(req)'; "
+                    f"fi; rm -f {remote_tmp}"
+                )
+                subprocess.run(
+                    ["ssh", "-o", "ConnectTimeout=5", f"{ssh_user}@{ha_host}", cmd],
+                    check=True,
+                    capture_output=True,
+                )
+                print("✓ Successfully transferred session bundle and triggered sync via SSH!")
+                uploaded = True
+            except Exception as ssh_err:
+                print(f"✗ SSH transfer fallback failed: {ssh_err}")
+
+    if not uploaded:
+        print("Upload this file through the Livongo BP Collector web UI in Home Assistant.")
+        return 1
 
     return 0
 
