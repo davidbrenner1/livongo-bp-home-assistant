@@ -179,15 +179,36 @@ def publish_entity(entity_id: str, state_value: Any, attributes: dict[str, Any])
     )
 
 
+def get_session_expiry(bundle: dict[str, Any] | None = None) -> str | None:
+    try:
+        if bundle is None:
+            if not SESSION_FILE.exists():
+                return None
+            bundle = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+        cookies = bundle.get("storage_state", {}).get("cookies", [])
+        expirations = [
+            c["expires"] for c in cookies
+            if c.get("expires") and c["expires"] > 0 and c.get("name") in ("access_token", "refresh_token", "auth_token", "member_auth_token", "_member_session")
+        ]
+        if expirations:
+            min_exp = min(expirations)
+            return datetime.fromtimestamp(min_exp, timezone.utc).isoformat()
+    except Exception:
+        pass
+    return None
+
+
 def publish_status_sensor() -> None:
     with status_lock:
         snapshot = dict(status)
+    session_exp = get_session_expiry()
     attrs = {
         "friendly_name": "Livongo BP Sync Status",
         "last_sync": snapshot.get("last_sync"),
         "last_error": snapshot.get("last_error"),
         "last_new_count": snapshot.get("last_new_count"),
         "session_uploaded": SESSION_FILE.exists(),
+        "session_expires": session_exp,
     }
     publish_entity("sensor.livongo_bp_sync_status", snapshot.get("state", "unknown"), attrs)
 
@@ -430,6 +451,36 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
                     results[int(reading["id"])] = reading
                 day += timedelta(days=1)
 
+            # Trigger proactive SSO / token refresh to keep session alive
+            try:
+                ref_resp = context.request.get(
+                    "https://usvc.livongo.com/v1/users/me/web/refresh/v2",
+                    headers={
+                        "Authorization": auth_header,
+                        "Accept": "application/json, text/plain, */*",
+                        "Referer": "https://my.teladoc.com/",
+                    },
+                    timeout=10_000,
+                )
+                if ref_resp.ok:
+                    LOG.info("Livongo token refresh endpoint succeeded (HTTP %s)", ref_resp.status)
+            except Exception as exc:
+                LOG.debug("Livongo refresh attempt: %s", exc)
+
+            try:
+                sso_resp = context.request.get(
+                    "https://mobile-api2.teladoc.com/utils/chronic_care/sso",
+                    headers={
+                        "Accept": "application/json, text/plain, */*",
+                        "Referer": "https://member.teladoc.com/",
+                    },
+                    timeout=10_000,
+                )
+                if sso_resp.ok:
+                    LOG.info("Teladoc chronic care SSO refresh succeeded (HTTP %s)", sso_resp.status)
+            except Exception as exc:
+                LOG.debug("Teladoc SSO refresh attempt: %s", exc)
+
             # Persist updated storage_state from browser context so token renewals are preserved
             try:
                 updated_state = context.storage_state()
@@ -437,7 +488,8 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
                 bundle["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
                 SESSION_FILE.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
                 os.chmod(SESSION_FILE, 0o600)
-                LOG.info("Persisted updated Livongo session state to disk")
+                exp = get_session_expiry(bundle)
+                LOG.info("Persisted updated Livongo/Teladoc session state (valid until %s)", exp or "unknown")
             except Exception:
                 LOG.exception("Failed to persist updated session state")
 
@@ -637,6 +689,7 @@ PAGE = """
     <p><strong>Last sync:</strong> {{ status.last_sync or 'Never' }}</p>
     {% if status.last_error %}<p class="error"><strong>Last error:</strong> {{ status.last_error }}</p>{% endif %}
     <p><strong>Session uploaded:</strong> {{ 'Yes' if session_exists else 'No' }}</p>
+    {% if session_expires %}<p><strong>Session valid until:</strong> {{ session_expires }}</p>{% endif %}
     <form method="post" action="sync"><button type="submit">Sync now</button></form>
   </div>
 
@@ -692,6 +745,7 @@ def index() -> str:
         PAGE,
         status=snapshot,
         session_exists=SESSION_FILE.exists(),
+        session_expires=get_session_expiry(),
         rows=recent_rows(),
         replay_message=request.args.get("replay_message"),
     )

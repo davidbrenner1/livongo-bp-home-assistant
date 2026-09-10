@@ -30,32 +30,52 @@ def parse_args() -> argparse.Namespace:
         default="http://192.168.50.116:8099/upload",
         help="Optional URL to automatically POST the session bundle to (defaults to http://192.168.50.116:8099/upload)",
     )
+    parser.add_argument(
+        "--user-data-dir",
+        default=str(Path(__file__).parent / ".chrome_profile"),
+        help="Path to persistent browser profile directory (defaults to .chrome_profile)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run headlessly using saved persistent browser profile",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    user_data_dir = Path(args.user_data_dir).resolve()
+    user_data_dir.mkdir(parents=True, exist_ok=True)
 
-    print(
-        "Teladoc Health / Livongo Session Exporter\n\n"
-        f"1. A Chromium browser window will open to {args.login_url}.\n"
-        "2. Log into your Teladoc Health account (complete 2FA if prompted).\n"
-        "3. Navigate to your Blood Pressure readings / history page.\n"
-        "4. Return to this Terminal window and press ENTER.\n\n"
-        "The generated JSON contains authenticated browser state. Treat it like a password.\n"
-    )
+    if not args.headless:
+        print(
+            "Teladoc Health / Livongo Session Exporter\n\n"
+            f"1. A Chromium browser window will open to {args.login_url}.\n"
+            "2. Log into your Teladoc Health account (complete 2FA if prompted).\n"
+            "3. Navigate to your Blood Pressure readings / history page.\n"
+            "4. Return to this Terminal window and press ENTER.\n\n"
+            "The generated JSON contains authenticated browser state. Treat it like a password.\n"
+        )
+    else:
+        print(f"Running headless session export with persistent profile at {user_data_dir}...")
 
     captured_apis: list[str] = []
 
     with sync_playwright() as p:
         try:
-            browser = p.chromium.launch(channel="chrome", headless=False)
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_dir),
+                channel="chrome",
+                headless=args.headless,
+                permissions=["clipboard-read", "clipboard-write"],
+            )
         except Exception:
-            browser = p.chromium.launch(headless=False)
-
-        context = browser.new_context(
-            permissions=["clipboard-read", "clipboard-write"],
-        )
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=str(user_data_dir),
+                headless=args.headless,
+                permissions=["clipboard-read", "clipboard-write"],
+            )
 
         # Force unblock paste events and handle React inputs
         context.add_init_script(
@@ -98,7 +118,7 @@ def main() -> int:
             })();
             """
         )
-        page = context.new_page()
+        page = context.pages[0] if context.pages else context.new_page()
 
         def on_request(req: Any) -> None:
             url = req.url
@@ -110,10 +130,19 @@ def main() -> int:
                         captured_apis.append(url)
 
         page.on("request", on_request)
-        page.goto(args.login_url, wait_until="domcontentloaded", timeout=120_000)
 
-        input(">>> After logging in and viewing your BP readings, press ENTER here...\n")
-        page.wait_for_timeout(1000)
+        if not args.headless:
+            page.goto(args.login_url, wait_until="domcontentloaded", timeout=120_000)
+            input(">>> After logging in and viewing your BP readings, press ENTER here...\n")
+            page.wait_for_timeout(1000)
+        else:
+            target_url = "https://my.teladoc.com/condition-management/blood-pressure/all-logs"
+            print(f"Navigating to {target_url}...")
+            page.goto(target_url, wait_until="domcontentloaded", timeout=60_000)
+            # Wait up to 20s for BP requests to complete
+            deadline = time.monotonic() + 20
+            while not any("reading/bp" in u for u in captured_apis) and time.monotonic() < deadline:
+                page.wait_for_timeout(500)
 
         try:
             storage_state = context.storage_state(indexed_db=True)
@@ -145,7 +174,6 @@ def main() -> int:
             pass
 
         context.close()
-        browser.close()
 
     print(f"\nSaved: {OUTPUT.resolve()}")
 
