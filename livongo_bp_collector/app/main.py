@@ -486,6 +486,16 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
                 updated_state = context.storage_state()
                 bundle["storage_state"] = updated_state
                 bundle["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    current_session_storage = page.evaluate(
+                        "Object.fromEntries(Array.from({length: sessionStorage.length}, "
+                        "(_, i) => { const k = sessionStorage.key(i); return [k, sessionStorage.getItem(k)]; }))"
+                    )
+                    if current_session_storage and page.url.startswith("http"):
+                        origin = page.url.split("/", 3)[0] + "//" + page.url.split("/", 3)[2]
+                        bundle.setdefault("session_storage", {})[origin] = current_session_storage
+                except Exception:
+                    pass
                 SESSION_FILE.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
                 os.chmod(SESSION_FILE, 0o600)
                 exp = get_session_expiry(bundle)
