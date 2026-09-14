@@ -1,6 +1,21 @@
 # Changelog
 
-## 0.2.4
+## 0.2.9
+- Added support for automated direct Teladoc credentials login (`username` / `password` options or `!secret`).
+- Added automatic re-authentication fallback when session expires.
+- Resolved Playwright child process reaping issues by allowing native signal tracking.
+
+## 0.2.8
+- Captured and persisted full React SPA `sessionStorage` alongside cookies and `localStorage`.
+
+## 0.2.7
+- Bypassed premature `member.teladoc.com` idle session redirect and navigated directly to blood pressure logs.
+
+## 0.2.6
+- Added proactive keep-alive token renewal (`/v1/users/me/web/refresh/v2` and `/utils/chronic_care/sso`).
+
+## 0.2.5
+- Added persistent Mac login helper with automated SSH sync fallback.
 - Migrated default member portal URLs and Referers from deprecated Livongo endpoints to Teladoc Health (`my.teladoc.com` / `member.teladoc.com/signin`).
 - Added multi-domain cookie and local storage state persistence across `teladoc.com` and `livongo.com`.
 

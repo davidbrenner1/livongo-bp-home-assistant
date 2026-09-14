@@ -57,6 +57,8 @@ status: dict[str, Any] = {
 
 @dataclass
 class Options:
+    username: str = ""
+    password: str = ""
     sync_interval_minutes: int = 15
     lookback_days: int = 7
     emit_initial_events: bool = False
@@ -68,6 +70,8 @@ def load_options() -> Options:
     try:
         raw = json.loads(OPTIONS_FILE.read_text(encoding="utf-8"))
         return Options(
+            username=str(raw.get("username", "") or "").strip(),
+            password=str(raw.get("password", "") or "").strip(),
             sync_interval_minutes=max(1, int(raw.get("sync_interval_minutes", 15))),
             lookback_days=max(1, int(raw.get("lookback_days", 7))),
             emit_initial_events=bool(raw.get("emit_initial_events", False)),
@@ -339,8 +343,86 @@ def endpoint_base(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
-def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
-    bundle = load_session_bundle()
+def login_teladoc(username: str, password: str) -> dict[str, Any]:
+    """Automates login on member.teladoc.com using username and password,
+    extracts storage_state, sessionStorage, and bearer tokens, and returns a session bundle."""
+    if not username or not password:
+        raise ValueError("Username and password are required for direct Teladoc login")
+
+    tz_name = ha_timezone()
+    masked_user = username[:3] + "***" if len(username) >= 3 else "***"
+    LOG.info("Attempting automated direct login for user '%s'...", masked_user)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            executable_path=CHROMIUM,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            timezone_id=tz_name,
+        )
+        page = context.new_page()
+
+        try:
+            page.goto(LOGIN_URL, wait_until="commit", timeout=30_000)
+            page.wait_for_selector("#login_username", timeout=20_000)
+
+            page.fill("#login_username", username)
+            page.fill("#login_password", password)
+            page.click("#submit, button[type='submit'], input[type='submit']")
+
+            # Wait for login navigation / redirect away from signin
+            page.wait_for_load_state("networkidle", timeout=30_000)
+
+            if "/signin" in page.url:
+                error_el = page.query_selector(".error-message, .alert, [role='alert'], .field-error")
+                error_msg = error_el.inner_text().strip() if error_el else "Invalid credentials or login rejected"
+                raise PermissionError(f"Teladoc direct login failed: {error_msg}")
+
+            LOG.info("Login form submitted successfully. Redirected to: %s", page.url)
+
+            # Navigate to Livongo logs page to trigger token creation
+            page.goto(LOGS_URL, wait_until="commit", timeout=30_000)
+            page.wait_for_timeout(5_000)
+
+            storage_state = context.storage_state()
+            session_storage: dict[str, dict[str, str]] = {}
+            try:
+                curr_session = page.evaluate(
+                    "Object.fromEntries(Array.from({length: sessionStorage.length}, "
+                    "(_, i) => { const k = sessionStorage.key(i); return [k, sessionStorage.getItem(k)]; }))"
+                )
+                if curr_session and page.url.startswith("http"):
+                    origin = page.url.split("/", 3)[0] + "//" + page.url.split("/", 3)[2]
+                    session_storage[origin] = curr_session
+            except Exception:
+                pass
+
+            bundle = {
+                "storage_state": storage_state,
+                "session_storage": session_storage,
+                "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+                "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "source": "in_addon_direct_login",
+            }
+            SESSION_FILE.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+            os.chmod(SESSION_FILE, 0o600)
+            LOG.info("Direct login successful; saved new session bundle to %s", SESSION_FILE)
+            return bundle
+        finally:
+            context.close()
+            browser.close()
+            cleanup_dangling_processes()
+
+
+def _execute_browser_fetch(bundle: dict[str, Any], lookback_days: int) -> list[dict[str, Any]]:
     tz_name = ha_timezone()
 
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
@@ -409,7 +491,7 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
                 page.wait_for_timeout(500)
 
             if ("/login" in page.url or "/signin" in page.url) and not captured["authorization"]:
-                raise PermissionError("Teladoc session expired; upload a new session bundle")
+                raise PermissionError("Teladoc session expired; upload a new session bundle or configure login credentials")
             if not captured["authorization"] or not captured["endpoint"]:
                 raise PermissionError(
                     "Could not obtain Teladoc/Livongo API authorization from the saved session; re-authenticate"
@@ -512,6 +594,36 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
         except OSError:
             pass
         cleanup_dangling_processes()
+
+
+def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
+    opts = load_options()
+    bundle: dict[str, Any] | None = None
+
+    if not SESSION_FILE.exists():
+        if opts.username and opts.password:
+            LOG.info("No session bundle found; performing automated direct login with configured credentials...")
+            bundle = login_teladoc(opts.username, opts.password)
+        else:
+            raise FileNotFoundError("No Livongo session bundle uploaded and no credentials configured")
+    else:
+        try:
+            bundle = load_session_bundle()
+        except Exception:
+            if opts.username and opts.password:
+                LOG.info("Session bundle invalid; performing automated direct login...")
+                bundle = login_teladoc(opts.username, opts.password)
+            else:
+                raise
+
+    try:
+        return _execute_browser_fetch(bundle, lookback_days)
+    except PermissionError as exc:
+        if opts.username and opts.password:
+            LOG.info("Session expired (%s); automatically re-authenticating via direct login...", exc)
+            bundle = login_teladoc(opts.username, opts.password)
+            return _execute_browser_fetch(bundle, lookback_days)
+        raise
 
 
 def cleanup_dangling_processes() -> None:
@@ -807,10 +919,6 @@ def replay_events() -> Any:
 
 
 def main() -> None:
-    try:
-        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
-    except Exception:
-        pass
     init_db()
     try:
         publish_status_sensor()
