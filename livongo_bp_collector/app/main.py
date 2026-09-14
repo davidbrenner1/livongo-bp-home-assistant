@@ -389,13 +389,6 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
 
             page.on("request", on_request)
 
-            # Touch member.teladoc.com first to keep parent SSO session and _member_session active
-            try:
-                page.goto("https://member.teladoc.com/", wait_until="commit", timeout=15_000)
-                page.wait_for_timeout(1000)
-            except Exception as exc:
-                LOG.debug("Initial member portal touch: %s", exc)
-
             # Retry loop for navigation to handle transient socket resets
             nav_error: Exception | None = None
             for attempt in range(1, 4):
