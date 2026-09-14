@@ -85,3 +85,8 @@ tokens.txt
 *.crt
 *.pfx
 *.p12
+
+# Chrome profile & logs
+*chrome_profile*
+.chrome_profile/
+*.log
