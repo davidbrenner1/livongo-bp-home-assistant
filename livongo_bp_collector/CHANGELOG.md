@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.10
+- Fixed ThreadPoolExecutor shutdown deadlock on timeout that caused sync worker to freeze in "syncing" state.
+- Increased full re-authentication + fetch timeout to 180 seconds.
+- Enhanced process cleanup and worker exception resilience.
+
 ## 0.2.9
 - Added support for automated direct Teladoc credentials login (`username` / `password` options or `!secret`).
 - Added automatic re-authentication fallback when session expires.

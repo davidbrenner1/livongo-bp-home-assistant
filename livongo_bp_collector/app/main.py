@@ -627,27 +627,31 @@ def fetch_livongo_readings(lookback_days: int) -> list[dict[str, Any]]:
 
 
 def cleanup_dangling_processes() -> None:
-    """Terminate any orphan/lingering Chromium processes to avoid zombie accumulation."""
-    for proc in ("chromium", "chrome_crashpad_handler", "node"):
+    """Terminate any orphan/lingering Chromium/Playwright processes to avoid zombie accumulation."""
+    for proc in ("chromium", "chrome_crashpad_handler", "playwright", "node"):
         try:
             subprocess.run(["pkill", "-9", "-f", proc], capture_output=True, timeout=5)
         except Exception:
             pass
 
 
-def fetch_livongo_readings_with_timeout(lookback_days: int, timeout_seconds: int = 90) -> list[dict[str, Any]]:
-    """Runs fetch_livongo_readings with a hard timeout to prevent indefinite deadlocks."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(fetch_livongo_readings, lookback_days)
-        try:
-            return future.result(timeout=timeout_seconds)
-        except concurrent.futures.TimeoutError:
-            LOG.error("fetch_livongo_readings timed out after %d seconds! Killing dangling processes...", timeout_seconds)
-            cleanup_dangling_processes()
-            raise TimeoutError(f"Livongo fetch timed out after {timeout_seconds} seconds")
-        except Exception:
-            cleanup_dangling_processes()
-            raise
+def fetch_livongo_readings_with_timeout(lookback_days: int, timeout_seconds: int = 180) -> list[dict[str, Any]]:
+    """Runs fetch_livongo_readings with a hard timeout without blocking executor shutdown."""
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fetch_livongo_readings, lookback_days)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError:
+        LOG.error("fetch_livongo_readings timed out after %d seconds! Killing dangling processes...", timeout_seconds)
+        cleanup_dangling_processes()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise TimeoutError(f"Livongo fetch timed out after {timeout_seconds} seconds")
+    except Exception:
+        cleanup_dangling_processes()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    finally:
+        executor.shutdown(wait=False)
 
 
 def insert_readings(readings: list[dict[str, Any]]) -> list[int]:
@@ -704,7 +708,7 @@ def sync_once() -> None:
         with db() as conn:
             before_count = conn.execute("SELECT COUNT(*) AS c FROM readings").fetchone()["c"]
 
-        readings = fetch_livongo_readings_with_timeout(opts.lookback_days, timeout_seconds=90)
+        readings = fetch_livongo_readings_with_timeout(opts.lookback_days, timeout_seconds=180)
         inserted_ids = insert_readings(readings)
         valid_rows = rows_by_ids(inserted_ids)
 
@@ -738,7 +742,7 @@ def sync_once() -> None:
         set_status("auth_required", str(exc), error=str(exc), new_count=0)
     except Exception as exc:
         LOG.exception("Sync failed")
-        set_status("error", "Sync failed", error=str(exc), new_count=0)
+        set_status("error", f"Sync failed: {exc}", error=str(exc), new_count=0)
     finally:
         sync_lock.release()
 
@@ -770,7 +774,10 @@ def replay(days: int) -> int:
 
 def worker() -> None:
     while True:
-        sync_once()
+        try:
+            sync_once()
+        except Exception as exc:
+            LOG.exception("Unexpected error in sync worker: %s", exc)
         opts = load_options()
         time.sleep(max(60, opts.sync_interval_minutes * 60))
 
